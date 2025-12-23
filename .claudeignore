@@ -1,0 +1,32 @@
+# Cline Rules - AI Assistant Configuration
+
+## Files and directories to ignore
+node_modules/
+dist/
+build/
+coverage/
+.git/
+*.log
+*.lock
+pnpm-lock.yaml
+yarn.lock
+package-lock.json
+.DS_Store
+src-tauri/target/
+
+## Additional patterns to ignore
+**/*.min.js
+**/*.min.css
+**/vendor/
+**/.cache/
+**/tmp/
+**/.next/
+**/.nuxt/
+
+## Include these files even if they match ignore patterns
+!src/**/*
+!public/**/*
+!*.config.js
+!*.config.ts
+!package.json
+!tsconfig.json
