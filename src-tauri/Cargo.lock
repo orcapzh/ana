@@ -39,6 +39,7 @@ dependencies = [
  "anyhow",
  "calamine",
  "chrono",
+ "dirs",
  "rust_xlsxwriter",
  "serde",
  "serde_json",

@@ -1,25 +1,113 @@
-mod models;
-mod excel_parser;
 mod data_processor;
+mod excel_parser;
+mod models;
 mod statement_generator;
 
-use models::{AppConfig, ProcessResult};
-use data_processor::{scan_excel_files, merge_delivery_data, group_by_customer_month};
+use data_processor::{
+    group_by_customer_month, merge_delivery_data, scan_excel_files, validate_delivery_data,
+};
+use models::{AppConfig, ProcessResult, ScanResult};
 use statement_generator::generate_statement;
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
 use tauri::Emitter;
 
+const CONFIG_FILE: &str = "config.json";
+
+/// 获取配置文件路径
+fn get_config_path() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("ana")
+        .join(CONFIG_FILE)
+}
+
+/// 加载配置
 #[tauri::command]
-fn get_default_config() -> AppConfig {
+fn load_config() -> AppConfig {
+    let config_path = get_config_path();
+    if config_path.exists() {
+        if let Ok(content) = fs::read_to_string(&config_path) {
+            if let Ok(config) = serde_json::from_str::<AppConfig>(&content) {
+                return config;
+            }
+        }
+    }
     AppConfig::default()
 }
 
+/// 保存配置
 #[tauri::command]
-fn save_config(_config: AppConfig) -> Result<(), String> {
-    // 这里可以将配置保存到文件
-    // 暂时只返回成功
+fn save_config(config: AppConfig) -> Result<(), String> {
+    let config_path = get_config_path();
+
+    // 创建配置目录
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {}", e))?;
+    }
+
+    // 序列化并保存
+    let content =
+        serde_json::to_string_pretty(&config).map_err(|e| format!("序列化配置失败: {}", e))?;
+
+    fs::write(&config_path, content).map_err(|e| format!("保存配置失败: {}", e))?;
+
     Ok(())
+}
+
+/// 扫描并验证数据
+#[tauri::command]
+async fn scan_and_validate(config: AppConfig) -> Result<ScanResult, String> {
+    let raw_data_path = PathBuf::from(&config.raw_data_path);
+
+    if !raw_data_path.exists() {
+        return Ok(ScanResult {
+            success: false,
+            message: "原始数据目录不存在".to_string(),
+            total_files: 0,
+            valid_files: 0,
+            errors: vec![],
+            warnings: vec![],
+            items: vec![],
+        });
+    }
+
+    // 扫描文件
+    let files =
+        scan_excel_files(&raw_data_path).map_err(|e| format!("扫描文件失败: {}", e))?;
+
+    if files.is_empty() {
+        return Ok(ScanResult {
+            success: true,
+            message: "未找到 Excel 文件".to_string(),
+            total_files: 0,
+            valid_files: 0,
+            errors: vec![],
+            warnings: vec![],
+            items: vec![],
+        });
+    }
+
+    // 验证数据
+    let (items, errors, warnings) = validate_delivery_data(&files);
+
+    Ok(ScanResult {
+        success: errors.is_empty(),
+        message: if errors.is_empty() {
+            if warnings.is_empty() {
+                "数据验证通过".to_string()
+            } else {
+                format!("数据验证通过，但发现 {} 个警告", warnings.len())
+            }
+        } else {
+            format!("发现 {} 个文件存在问题", errors.len())
+        },
+        total_files: files.len(),
+        valid_files: files.len() - errors.len() - warnings.len(),
+        errors,
+        warnings,
+        items,
+    })
 }
 
 #[tauri::command]
@@ -27,6 +115,9 @@ async fn process_delivery_orders(
     app: tauri::AppHandle,
     config: AppConfig,
 ) -> Result<ProcessResult, String> {
+    // 先保存配置
+    save_config(config.clone())?;
+
     let raw_data_path = PathBuf::from(&config.raw_data_path);
     let output_path = PathBuf::from(&config.output_path);
 
@@ -34,8 +125,8 @@ async fn process_delivery_orders(
     let _ = app.emit("log", "开始扫描 Excel 文件...");
 
     // 扫描 Excel 文件
-    let files = scan_excel_files(&raw_data_path)
-        .map_err(|e| format!("扫描文件失败: {}", e))?;
+    let files =
+        scan_excel_files(&raw_data_path).map_err(|e| format!("扫描文件失败: {}", e))?;
 
     let _ = app.emit("log", format!("找到 {} 个 Excel 文件", files.len()));
 
@@ -45,8 +136,8 @@ async fn process_delivery_orders(
 
     // 合并数据
     let _ = app.emit("log", "正在合并送货单数据...");
-    let all_items = merge_delivery_data(&files)
-        .map_err(|e| format!("合并数据失败: {}", e))?;
+    let all_items =
+        merge_delivery_data(&files).map_err(|e| format!("合并数据失败: {}", e))?;
 
     let _ = app.emit("log", format!("共提取 {} 条数据记录", all_items.len()));
 
@@ -55,19 +146,14 @@ async fn process_delivery_orders(
     }
 
     // 创建输出目录
-    fs::create_dir_all(&output_path)
-        .map_err(|e| format!("创建输出目录失败: {}", e))?;
-
-    // 保存合并后的数据
-    let _merged_file = output_path.join("merged_delivery_orders.xlsx");
-    let _ = app.emit("log", "正在保存合并数据...");
-
-    // 这里应该保存合并的 Excel 文件，暂时跳过
-    // save_merged_excel(&all_items, &merged_file)?;
+    fs::create_dir_all(&output_path).map_err(|e| format!("创建输出目录失败: {}", e))?;
 
     // 按客户和月份分组
     let grouped = group_by_customer_month(&all_items);
-    let _ = app.emit("log", format!("共有 {} 个客户月份组合", grouped.len()));
+    let _ = app.emit(
+        "log",
+        format!("共有 {} 个客户月份组合", grouped.len()),
+    );
 
     // 生成对账单
     let _ = app.emit("log", "开始生成对账单...");
@@ -81,15 +167,18 @@ async fn process_delivery_orders(
 
         // 创建客户文件夹
         let customer_dir = output_path.join(customer);
-        fs::create_dir_all(&customer_dir)
-            .map_err(|e| format!("创建客户文件夹失败: {}", e))?;
+        fs::create_dir_all(&customer_dir).map_err(|e| format!("创建客户文件夹失败: {}", e))?;
 
         // 生成文件名
-        let statement_file = customer_dir.join(format!("statement_{}_{}.xlsx", customer, year_month));
+        let statement_file =
+            customer_dir.join(format!("statement_{}_{}.xlsx", customer, year_month));
 
         // 检查文件是否已存在
         if statement_file.exists() {
-            let _ = app.emit("log", format!("已存在，跳过: {} {}", customer, year_month));
+            let _ = app.emit(
+                "log",
+                format!("已存在，跳过: {} {}", customer, year_month),
+            );
             skipped_count += 1;
             continue;
         }
@@ -136,9 +225,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            get_default_config,
+            load_config,
             save_config,
-            process_delivery_orders
+            process_delivery_orders,
+            scan_and_validate
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

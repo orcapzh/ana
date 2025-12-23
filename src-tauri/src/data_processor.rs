@@ -1,5 +1,5 @@
 use crate::excel_parser::extract_delivery_data;
-use crate::models::{DeliveryItem, SummaryItem};
+use crate::models::{DeliveryItem, FileValidationError, SummaryItem};
 use anyhow::Result;
 use chrono::Datelike;
 use std::collections::HashMap;
@@ -51,6 +51,70 @@ pub fn merge_delivery_data(files: &[PathBuf]) -> Result<Vec<DeliveryItem>> {
     }
 
     Ok(all_items)
+}
+
+/// 验证并合并送货单数据
+pub fn validate_delivery_data(
+    files: &[PathBuf],
+) -> (
+    Vec<DeliveryItem>,
+    Vec<FileValidationError>,
+    Vec<FileValidationError>,
+) {
+    let mut all_items = Vec::new();
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+
+    for file in files {
+        match extract_delivery_data(file) {
+            Ok(items) => {
+                if items.is_empty() {
+                    warnings.push(FileValidationError {
+                        file: file.to_string_lossy().to_string(),
+                        error: "该文件未包含有效数据或格式不匹配".to_string(),
+                    });
+                } else {
+                    // 验证日期
+                    let mut file_has_error = false;
+                    for item in &items {
+                        if let Err(e) = validate_date_str(&item.date) {
+                            errors.push(FileValidationError {
+                                file: file.to_string_lossy().to_string(),
+                                error: format!("日期错误 '{}': {}", item.date, e),
+                            });
+                            file_has_error = true;
+                            break; // 每个文件只报错一次
+                        }
+                    }
+
+                    if !file_has_error {
+                        all_items.extend(items);
+                    }
+                }
+            }
+            Err(e) => {
+                errors.push(FileValidationError {
+                    file: file.to_string_lossy().to_string(),
+                    error: format!("解析失败: {}", e),
+                });
+            }
+        }
+    }
+
+    (all_items, errors, warnings)
+}
+
+fn validate_date_str(date_str: &str) -> Result<(), String> {
+    // 尝试解析日期
+    let formats = ["%Y-%m-%d", "%Y/%m/%d", "%Y年%m月%d日"];
+
+    for format in &formats {
+        if let Ok(_) = chrono::NaiveDate::parse_from_str(date_str, format) {
+            return Ok(());
+        }
+    }
+
+    Err("无法识别的日期格式或日期无效".to_string())
 }
 
 /// 生成汇总数据

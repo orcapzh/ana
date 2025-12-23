@@ -94,11 +94,7 @@ pub fn extract_delivery_data(file_path: &Path) -> Result<Vec<DeliveryItem>> {
             amount,
             customer: customer_name.clone(),
             date: date.clone(),
-            source_file: file_path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string(),
+            source_file: file_path.to_string_lossy().to_string(),
         });
     }
 

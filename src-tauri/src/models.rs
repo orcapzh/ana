@@ -83,3 +83,22 @@ pub struct ProcessResult {
     pub skipped_count: usize,
     pub output_path: String,
 }
+
+/// 文件验证错误
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileValidationError {
+    pub file: String,
+    pub error: String,
+}
+
+/// 扫描结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanResult {
+    pub success: bool,
+    pub message: String,
+    pub total_files: usize,
+    pub valid_files: usize,
+    pub errors: Vec<FileValidationError>,
+    pub warnings: Vec<FileValidationError>,
+    pub items: Vec<DeliveryItem>,
+}
