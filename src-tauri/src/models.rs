@@ -21,6 +21,8 @@ pub struct DeliveryItem {
     pub date: String,
     /// 送货单号
     pub delivery_order_no: String,
+    /// 订单号 (PO No)
+    pub order_no: String,
     /// 源文件
     pub source_file: String,
     /// 客户类型 (monthly: 月结, cash: 现金)

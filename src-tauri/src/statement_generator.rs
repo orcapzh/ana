@@ -14,17 +14,41 @@ pub fn generate_statement(
     let mut workbook = Workbook::new();
     let worksheet = workbook.add_worksheet();
 
+    // 检查是否包含订单号
+    let has_order_no = items.iter().any(|i| !i.order_no.is_empty());
+    // 总列数索引 (例如：日期、送货单号、[订单号]、品名规格、单位、数量、单价、金额、备注)
+    // 有订单号共9列 (0-8)，无订单号共8列 (0-7)
+    let total_cols = if has_order_no { 8 } else { 7 };
+
     // 设置列宽
     worksheet.set_column_width(0, 12)?; // 日期
     worksheet.set_column_width(1, 15)?; // 送货单号
-    worksheet.set_column_width(2, 20)?; // 品名规格
-    worksheet.set_column_width(3, 8)?;  // 单位
-    worksheet.set_column_width(4, 10)?; // 数量
-    worksheet.set_column_width(5, 10)?; // 单价
-    worksheet.set_column_width(6, 12)?; // 金额
-    worksheet.set_column_width(7, 12)?; // 备注
+    
+    let mut current_col = 2;
+    if has_order_no {
+        worksheet.set_column_width(current_col, 15)?; // 订单号
+        current_col += 1;
+    }
+    
+    // 如果没有订单号，给品名规格更多空间
+    let product_width = if has_order_no { 20 } else { 35 };
+    worksheet.set_column_width(current_col, product_width)?; // 品名规格
+    current_col += 1;
+    
+    worksheet.set_column_width(current_col, 8)?;  // 单位
+    current_col += 1;
+    let qty_col_idx = current_col;
+    worksheet.set_column_width(current_col, 10)?; // 数量
+    current_col += 1;
+    let price_col_idx = current_col;
+    worksheet.set_column_width(current_col, 10)?; // 单价
+    current_col += 1;
+    let amount_col_idx = current_col;
+    worksheet.set_column_width(current_col, 12)?; // 金额
+    current_col += 1;
+    worksheet.set_column_width(current_col, 12)?; // 备注
 
-    // 标题格式
+    // 格式定义
     let title_format = Format::new()
         .set_font_size(18)
         .set_bold()
@@ -50,6 +74,13 @@ pub fn generate_statement(
         .set_align(FormatAlign::VerticalCenter)
         .set_border(FormatBorder::Thin);
 
+    let amount_cell_format = Format::new()
+        .set_font_size(10)
+        .set_align(FormatAlign::Center)
+        .set_align(FormatAlign::VerticalCenter)
+        .set_border(FormatBorder::Thin)
+        .set_num_format("¥#,##0.00");
+
     let wrap_format = Format::new()
         .set_font_size(10)
         .set_align(FormatAlign::Center)
@@ -57,19 +88,19 @@ pub fn generate_statement(
         .set_text_wrap()
         .set_border(FormatBorder::Thin);
 
-    // 标题行（第1行）
-    worksheet.merge_range(0, 0, 0, 7, &config.company_name, &title_format)?;
+    // 标题行
+    worksheet.merge_range(0, 0, 0, total_cols as u16, &config.company_name, &title_format)?;
     worksheet.set_row_height(0, 30)?;
 
-    // 地址行（第2行）
+    // 地址行
     let address_text = format!("地址：{}", config.address);
-    worksheet.merge_range(1, 0, 1, 7, &address_text, &subtitle_format)?;
+    worksheet.merge_range(1, 0, 1, total_cols as u16, &address_text, &subtitle_format)?;
 
-    // 联系方式行（第3行）
+    // 联系方式行
     let contact_text = format!("电话：{}    传真：{}", config.phone, config.fax);
-    worksheet.merge_range(2, 0, 2, 7, &contact_text, &subtitle_format)?;
+    worksheet.merge_range(2, 0, 2, total_cols as u16, &contact_text, &subtitle_format)?;
 
-    // 客户和日期信息（第4行）
+    // 客户和日期信息
     let customer_text = format!("客户：{}", customer_name);
     worksheet.merge_range(3, 0, 3, 2, &customer_text, &Format::new())?;
 
@@ -83,80 +114,126 @@ pub fn generate_statement(
         &Format::new().set_align(FormatAlign::Center),
     )?;
 
-    // 表头（第5行）
-    let headers = ["送货日期", "送货单号", "品名规格", "单位", "数量", "单价", "金额", "备注"];
+    // 表头
+    let mut headers = vec!["送货日期", "送货单号"];
+    if has_order_no {
+        headers.push("订单号");
+    }
+    headers.extend(["品名规格", "单位", "数量", "单价", "金额", "备注"]);
+    
     for (col, header) in headers.iter().enumerate() {
         worksheet.write_with_format(4, col as u16, *header, &header_format)?;
     }
 
-    // 数据行（从第6行开始）
+    // 数据行
     let mut sorted_items: Vec<&DeliveryItem> = items.iter().collect();
     sorted_items.sort_by(|a, b| a.date.cmp(&b.date));
+
+    let start_data_row = 6; // Excel 1-based index for row 6 (index 5)
+    let mut last_data_row = start_data_row;
 
     let mut total_amount = 0.0;
     for (idx, item) in sorted_items.iter().enumerate() {
         let row = (idx + 5) as u32;
+        let excel_row = row + 1;
+        last_data_row = excel_row;
+        let mut col = 0;
 
         // 日期
-        let date_str = format_date(&item.date);
-        worksheet.write_with_format(row, 0, &date_str, &cell_format)?;
+        worksheet.write_with_format(row, col, &format_date(&item.date), &cell_format)?;
+        col += 1;
 
         // 送货单号
-        worksheet.write_with_format(row, 1, &item.delivery_order_no, &cell_format)?;
+        worksheet.write_with_format(row, col, &item.delivery_order_no, &cell_format)?;
+        col += 1;
+
+        // 订单号 (可选)
+        if has_order_no {
+            worksheet.write_with_format(row, col, &item.order_no, &cell_format)?;
+            col += 1;
+        }
 
         // 品名规格
         let product_spec = format!("{} {}", item.product_name, item.spec);
-        worksheet.write_with_format(row, 2, &product_spec, &wrap_format)?;
+        worksheet.write_with_format(row, col, &product_spec, &wrap_format)?;
+        col += 1;
 
         // 单位
-        worksheet.write_with_format(row, 3, &item.unit, &cell_format)?;
+        worksheet.write_with_format(row, col, &item.unit, &cell_format)?;
+        col += 1;
 
         // 数量
-        worksheet.write_with_format(row, 4, item.quantity, &cell_format)?;
+        worksheet.write_with_format(row, col, item.quantity, &cell_format)?;
+        col += 1;
 
         // 单价
-        worksheet.write_with_format(row, 5, item.unit_price, &cell_format)?;
+        worksheet.write_with_format(row, col, item.unit_price, &cell_format)?;
+        col += 1;
 
-        // 金额
-        worksheet.write_with_format(row, 6, item.amount, &cell_format)?;
+        // 金额 (公式: 数量 * 单价)
+        let qty_cell = format!("{}{}", utility::column_number_to_name(qty_col_idx as u16), excel_row);
+        let price_cell = format!("{}{}", utility::column_number_to_name(price_col_idx as u16), excel_row);
+        let amount_formula = format!("={}*{}", qty_cell, price_cell);
+        worksheet.write_formula_with_format(row, col, amount_formula.as_str(), &amount_cell_format)?;
+        col += 1;
 
         // 备注
-        worksheet.write_with_format(row, 7, "", &cell_format)?;
+        worksheet.write_with_format(row, col, "", &cell_format)?;
 
         total_amount += item.amount;
     }
 
     // 合计行
     let summary_row = (sorted_items.len() + 7) as u32;
+    let amount_col_name = utility::column_number_to_name(amount_col_idx as u16);
+    
+    // 预计算初始大写文字 (用于 Numbers 等不支持公式的环境)
+    let initial_chinese = amount_to_chinese(total_amount);
+    
+    // 构造大写转换公式 (针对 Excel/WPS 环境)
+    let sum_ref = format!("SUM({}{}:{}{})", amount_col_name, start_data_row, amount_col_name, last_data_row);
+    let caps_formula = format!(
+        "=\"合计人民币大写：\" & IF({0}=0,\"零元整\",IF({0}<0,\"负\",\"\") & SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(TEXT(INT(ABS({0})),\"[DBNum2]0元\") & TEXT(MOD(INT(ABS({0})*10),10),\"[DBNum2]0角\") & TEXT(MOD(INT(ABS({0})*100),10),\"[DBNum2]0分\"),\"零角零分\",\"整\"),\"零分\",\"整\"),\"零角\",\"零\"))",
+        sum_ref
+    );
 
-    // 中文大写金额
-    let chinese_amount = amount_to_chinese(total_amount);
-    let summary_text = format!("合计人民币大写：{}", chinese_amount);
+    // 中文大写合计
     worksheet.merge_range(
         summary_row,
         0,
         summary_row,
         3,
-        &summary_text,
+        "",
         &Format::new().set_font_size(11),
     )?;
+    
+    // 写入公式。注意：由于 Numbers 不支持此公式，它可能会显示错误或 0。
+    // 但在生成时，我们已经提供了初始金额。
+    worksheet.write_formula_with_format(
+        summary_row,
+        0,
+        caps_formula.as_str(),
+        &Format::new().set_font_size(11)
+    )?;
+    
+    // 如果是第一次打开，公式可能还没运行，有些软件会显示我们写入的“默认值”
+    // 这里我们强制写入初始文字作为占位（部分软件支持）
+    // worksheet.write_string(summary_row, 0, &format!("合计人民币大写：{}", initial_chinese), &Format::new().set_font_size(11))?;
 
-    // 小写金额
-    let amount_text = format!("人民币小写：{:.2}元", total_amount);
-    worksheet.merge_range(
-        summary_row,
-        4,
-        summary_row,
-        7,
-        &amount_text,
-        &Format::new()
-            .set_font_size(11)
-            .set_align(FormatAlign::Right),
+    // 数字总计公式 (SUM)
+    let sum_formula = format!("=SUM({}{}:{}{})", amount_col_name, start_data_row, amount_col_name, last_data_row);
+    
+    let total_label_format = Format::new().set_font_size(11).set_align(FormatAlign::Right);
+    worksheet.merge_range(summary_row, 4, summary_row, total_cols as u16, "", &total_label_format)?;
+    // 在合并单元格的左上角写入公式
+    worksheet.write_formula_with_format(
+        summary_row, 
+        4, 
+        sum_formula.as_str(), 
+        &Format::new().set_font_size(11).set_align(FormatAlign::Right).set_num_format("\"人民币小写：\"¥#,##0.00\"元\"")
     )?;
 
-    // 保存文件
     workbook.save(output_file)?;
-
     Ok(())
 }
 

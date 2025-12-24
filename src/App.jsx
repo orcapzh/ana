@@ -57,6 +57,7 @@ function App() {
 
   // Analysis State
   const [analysisTarget, setAnalysisTarget] = useState("all"); // 'all' or customerName
+  const [detailProduct, setDetailProduct] = useState(null);
 
   // Success Modal State
   const [successModalOpen, setSuccessModalOpen] = useState(false);
@@ -957,6 +958,7 @@ function App() {
                             <tr>
                               <th className="px-4 py-3 w-32">日期</th>
                               <th className="px-4 py-3 w-32">送货单号</th>
+                              <th className="px-4 py-3 w-32">订单号</th>
                               <th className="px-4 py-3">货名</th>
                               <th className="px-4 py-3 w-24">规格</th>
                               <th className="px-4 py-3 w-20 text-right">数量</th>
@@ -969,7 +971,7 @@ function App() {
                           <tbody className="divide-y divide-slate-100">
                             {currentItems.length === 0 ? (
                               <tr>
-                                <td colSpan="9" className="px-4 py-8 text-center text-slate-400">
+                                <td colSpan="10" className="px-4 py-8 text-center text-slate-400">
                                   无数据
                                 </td>
                               </tr>
@@ -978,6 +980,7 @@ function App() {
                                 <tr key={idx} className="hover:bg-slate-50">
                                   <td className="px-4 py-3 text-slate-600">{item.date}</td>
                                   <td className="px-4 py-3 text-slate-600">{item.delivery_order_no}</td>
+                                  <td className="px-4 py-3 text-slate-600 font-mono text-xs">{item.order_no}</td>
                                   <td
                                     className="px-4 py-3 text-slate-900 font-medium truncate max-w-[200px]"
                                     title={item.product_name}
@@ -1006,7 +1009,7 @@ function App() {
                           {currentItems.length > 0 && (
                             <tfoot className="bg-slate-50 border-t border-slate-200 font-semibold text-slate-900">
                               <tr>
-                                <td colSpan="4" className="px-4 py-3 text-right">本月合计:</td>
+                                <td colSpan="5" className="px-4 py-3 text-right">本月合计:</td>
                                 <td className="px-4 py-3 text-right">{currentSummary.quantity}</td>
                                 <td className="px-4 py-3"></td>
                                 <td className="px-4 py-3 text-right"></td>
@@ -1077,40 +1080,41 @@ function App() {
                       </div>
                     </div>
 
-                                        {/* Trend Chart */}
-                                        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                                            <div className="flex items-center gap-2 font-medium text-slate-900 mb-6">
-                                                <TrendingUp className="w-4 h-4 text-emerald-500" />
-                                                月度销售趋势
-                                            </div>
-                                            {analysisData.monthlyTrend.length === 0 ? (
-                                                <div className="h-48 flex items-center justify-center text-slate-400 text-sm">
-                                                    暂无月度数据
-                                                </div>
-                                            ) : (
-                                                <div className="flex items-end gap-2 h-48">
-                                                  {(() => {
-                                                    const maxVal = Math.max(...analysisData.monthlyTrend.map(d => d.value)) || 1;
-                                                    return analysisData.monthlyTrend.map((item, idx) => (
-                                                        <div key={idx} className="flex-1 flex flex-col items-center group relative h-full justify-end">
-                                                            {/* Tooltip */}
-                                                            <div className="absolute bottom-full mb-2 bg-slate-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none">
-                                                                {item.label}: ¥{item.value.toLocaleString()}
-                                                            </div>
-                                                            <div className="w-full flex-1 flex items-end justify-center">
-                                                                 <div
-                                                                    className="w-full bg-emerald-100 hover:bg-emerald-200 rounded-t-sm transition-all relative overflow-hidden group-hover:bg-emerald-300 min-h-[4px]"
-                                                                    style={{ height: `${Math.max(0, (item.value / maxVal) * 100)}%` }}
-                                                                />
-                                                            </div>
-                                                            <span className="text-[10px] text-slate-400 mt-2 w-full text-center truncate rotate-0">{item.label}</span>
-                                                        </div>
-                                                    ));
-                                                  })()}
-                                                </div>
-                                            )}
-                                        </div>
-                                        <div className="grid grid-cols-1 gap-6">
+                                                                                {/* Trend Chart */}
+                                                                                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                                                                    <div className="flex items-center gap-2 font-medium text-slate-900 mb-6">
+                                                                                        <TrendingUp className="w-4 h-4 text-emerald-500" />
+                                                                                        月度销售趋势
+                                                                                    </div>
+                                                                                    {analysisData.monthlyTrend.length === 0 ? (
+                                                                                        <div className="h-48 flex items-center justify-center text-slate-400 text-sm">
+                                                                                            暂无月度数据
+                                                                                        </div>
+                                                                                    ) : (
+                                                                                        <div className="overflow-x-auto pb-2 scrollbar-hide">
+                                                                                            <div className="flex items-end gap-2 h-48 min-w-full" style={{ width: `${Math.max(100, analysisData.monthlyTrend.length * 50)}px` }}>
+                                                                                            {(() => {
+                                                                                                const maxVal = Math.max(...analysisData.monthlyTrend.map(d => d.value)) || 1;
+                                                                                                return analysisData.monthlyTrend.map((item, idx) => (
+                                                                                                    <div key={idx} className="flex-1 flex flex-col items-center group relative h-full justify-end min-w-[40px]">
+                                                                                                        {/* Tooltip */}
+                                                                                                        <div className="absolute bottom-full mb-2 bg-slate-800 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none shadow-xl">
+                                                                                                            {item.label}: ¥{item.value.toLocaleString()}
+                                                                                                        </div>
+                                                                                                        <div className="w-full flex-1 flex items-end justify-center px-1">
+                                                                                                            <div 
+                                                                                                                className="w-full bg-emerald-100 hover:bg-emerald-200 rounded-t-sm transition-all relative overflow-hidden group-hover:bg-emerald-300 min-h-[2px]"
+                                                                                                                style={{ height: `${Math.max(0, (item.value / maxVal) * 100)}%` }}
+                                                                                                            />
+                                                                                                        </div>
+                                                                                                        <span className="text-[9px] text-slate-400 mt-2 w-full text-center truncate">{item.label}</span>
+                                                                                                    </div>
+                                                                                                ));
+                                                                                            })()}
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    )}
+                                                                                </div>                                        <div className="grid grid-cols-1 gap-6">
                        {/* Ranking Chart */}
                        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                           <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
@@ -1168,26 +1172,31 @@ function App() {
                                     }).join(" ");
 
                                     return (
-                                        <div key={idx} className="border border-slate-100 rounded-lg p-3 hover:border-emerald-200 transition-colors bg-slate-50/50">
+                                        <div 
+                                            key={idx} 
+                                            onClick={() => setDetailProduct(product)}
+                                            className="border border-slate-100 rounded-lg p-3 hover:border-emerald-400 hover:shadow-md cursor-pointer transition-all bg-white shadow-sm group"
+                                        >
                                             <div className="flex justify-between items-start mb-2">
                                                 <div>
-                                                    <div className="text-xs font-medium text-slate-900 truncate max-w-[180px]" title={product.name}>{product.name}</div>
-                                                    <div className="text-[10px] text-slate-500">{product.spec}</div>
+                                                    <div className="text-xs font-bold text-slate-900 truncate max-w-[180px]" title={product.name}>{product.name}</div>
+                                                    <div className="text-[10px] text-slate-500 mt-0.5">{product.spec}</div>
                                                 </div>
                                                 <div className="text-right">
-                                                    <div className="text-xs font-bold text-slate-900">¥{latestPrice.toFixed(2)}</div>
+                                                    <div className="text-[9px] text-slate-400 leading-none mb-1">最新月均价</div>
+                                                    <div className="text-sm font-bold text-slate-900">¥{latestPrice.toFixed(2)}</div>
                                                     {product.timeline.length > 1 && (
-                                                        <div className={`text-[10px] ${latestPrice > product.timeline[0].avgPrice ? 'text-red-500' : 'text-emerald-500'}`}>
+                                                        <div className={`text-[10px] flex items-center justify-end font-medium ${latestPrice > product.timeline[0].avgPrice ? 'text-red-500' : 'text-emerald-500'}`}>
                                                             {latestPrice > product.timeline[0].avgPrice ? '↑' : latestPrice < product.timeline[0].avgPrice ? '↓' : '-'}
+                                                            <span className="ml-0.5">较期初</span>
                                                         </div>
                                                     )}
                                                 </div>
                                             </div>
                                             
                                             {/* Sparkline */}
-                                            <div className="h-10 w-full relative">
-                                                <svg viewBox="0 0 100 40" className="w-full h-full overflow-visible preserve-3d">
-                                                    {/* Reference Line (Mid) if flat, or Grid? Just line for now */}
+                                            <div className="h-12 w-full relative my-2 bg-slate-50/50 rounded flex items-center px-1">
+                                                <svg viewBox="0 0 100 40" className="w-full h-8 overflow-visible">
                                                     <polyline
                                                         points={points}
                                                         fill="none"
@@ -1197,7 +1206,6 @@ function App() {
                                                         strokeLinecap="round"
                                                         strokeLinejoin="round"
                                                     />
-                                                    {/* Dots for each point */}
                                                     {product.timeline.map((t, i) => {
                                                          const x = (i / (product.timeline.length - 1 || 1)) * width;
                                                          const range = maxPrice - minPrice;
@@ -1205,14 +1213,23 @@ function App() {
                                                              ? height / 2 
                                                              : height - ((t.avgPrice - minPrice) / range) * height;
                                                          return (
-                                                             <circle cx={x} cy={y} r="1.5" fill="white" stroke="currentColor" className="text-slate-400" key={i} />
+                                                             <g key={i} className="cursor-pointer">
+                                                                <circle cx={x} cy={y} r="2" fill="white" stroke="currentColor" className={latestPrice > (product.timeline[0]?.avgPrice || 0) ? "text-red-400" : "text-emerald-400"} />
+                                                                <title>{`${t.month}: ¥${t.avgPrice.toFixed(2)}`}</title>
+                                                             </g>
                                                          )
                                                     })}
                                                 </svg>
                                             </div>
-                                            <div className="flex justify-between text-[9px] text-slate-400 mt-1">
-                                                <span>{product.timeline[0]?.month}</span>
-                                                <span>{product.timeline[product.timeline.length-1]?.month}</span>
+                                            
+                                            <div className="flex justify-between items-center text-[9px] font-medium">
+                                                <div className="flex gap-3">
+                                                    <span className="text-slate-400">低 <span className="text-slate-600">¥{minPrice.toFixed(2)}</span></span>
+                                                    <span className="text-slate-400">高 <span className="text-slate-600">¥{maxPrice.toFixed(2)}</span></span>
+                                                </div>
+                                                <div className="text-slate-400">
+                                                    {product.timeline[0]?.month} 至 {product.timeline[product.timeline.length-1]?.month}
+                                                </div>
                                             </div>
                                         </div>
                                     );
@@ -1314,6 +1331,151 @@ function App() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Product Detail Modal */}
+      {detailProduct && (
+        <div 
+            className="absolute inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-8 animate-in fade-in duration-300"
+            onClick={() => setDetailProduct(null)}
+        >
+            <div 
+                className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full flex flex-col overflow-hidden transform animate-in zoom-in-95 slide-in-from-bottom-10 duration-300"
+                onClick={e => e.stopPropagation()}
+            >
+                <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                    <div>
+                        <h3 className="text-xl font-bold text-slate-900">{detailProduct.name}</h3>
+                        <p className="text-sm text-slate-500 mt-1">规格: {detailProduct.spec}</p>
+                    </div>
+                    <button 
+                        onClick={() => setDetailProduct(null)}
+                        className="p-2 hover:bg-white hover:shadow-sm rounded-xl text-slate-400 hover:text-slate-600 transition-all"
+                    >
+                        <ChevronRight className="w-6 h-6 rotate-90" />
+                    </button>
+                </div>
+
+                <div className="p-8">
+                    {/* Detailed Chart Area */}
+                    <div className="bg-white rounded-2xl p-8 border border-slate-100 shadow-inner">
+                        <div className="h-96 w-full relative">
+                            {(() => {
+                                const timeline = detailProduct.timeline;
+                                const prices = timeline.map(t => t.avgPrice);
+                                const minPrice = Math.min(...prices);
+                                const maxPrice = Math.max(...prices);
+                                const padding = (maxPrice - minPrice) * 0.25 || 2;
+                                
+                                const chartMin = Math.max(0, minPrice - padding);
+                                const chartMax = maxPrice + padding;
+                                const range = chartMax - chartMin;
+
+                                const width = 1000;
+                                const height = 400;
+
+                                const getX = (i) => (i / (timeline.length - 1 || 1)) * width;
+                                const getY = (price) => height - ((price - chartMin) / range) * height;
+
+                                const points = timeline.map((t, i) => `${getX(i)},${getY(t.avgPrice)}`).join(" ");
+
+                                return (
+                                    <svg viewBox={`0 -40 ${width} ${height + 80}`} className="w-full h-full overflow-visible">
+                                        {/* Grid Lines & Y-Axis Scale */}
+                                        {[0, 0.25, 0.5, 0.75, 1].map(p => {
+                                            const y = getY(chartMin + range * p);
+                                            return (
+                                                <g key={p}>
+                                                    <line 
+                                                        x1="0" y1={y} x2={width} y2={y} 
+                                                        stroke="#f1f5f9" strokeWidth="2"
+                                                    />
+                                                    <text x="0" y={y - 8} className="text-[14px] fill-slate-300 font-bold">
+                                                        ¥{(chartMin + range * p).toFixed(2)}
+                                                    </text>
+                                                </g>
+                                            );
+                                        })}
+
+                                        {/* Area under the line */}
+                                        <path
+                                            d={`M ${timeline.map((t, i) => `${getX(i)} ${getY(t.avgPrice)}`).join(" L ")} L ${width} ${height} L 0 ${height} Z`}
+                                            fill="url(#detailGradient)"
+                                            className="opacity-10"
+                                        />
+                                        <defs>
+                                            <linearGradient id="detailGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                                <stop offset="0%" stopColor="#10b981" />
+                                                <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
+                                            </linearGradient>
+                                        </defs>
+
+                                        {/* Main Line */}
+                                        <polyline
+                                            points={points}
+                                            fill="none"
+                                            stroke="#10b981"
+                                            strokeWidth="5"
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                        />
+
+                                        {/* Data Points */}
+                                        {timeline.map((t, i) => {
+                                            const x = getX(i);
+                                            const y = getY(t.avgPrice);
+                                            return (
+                                                <g key={i} className="group/point">
+                                                    <circle 
+                                                        cx={x} cy={y} r="8" 
+                                                        fill="white" stroke="#10b981" strokeWidth="4"
+                                                        className="transition-all" 
+                                                    />
+                                                    {/* Price Value Tag */}
+                                                    <rect x={x - 45} y={y - 45} width="90" height="30" rx="8" className="fill-slate-800 opacity-0 group-hover/point:opacity-100 transition-opacity" />
+                                                    <text 
+                                                        x={x} y={y - 25} 
+                                                        textAnchor="middle" 
+                                                        className="text-[18px] font-bold fill-slate-900 group-hover/point:fill-white transition-colors"
+                                                    >
+                                                        ¥{t.avgPrice.toFixed(2)}
+                                                    </text>
+                                                    {/* Month Label */}
+                                                    <text 
+                                                        x={x} y={height + 30} 
+                                                        textAnchor="middle" 
+                                                        className="text-[16px] fill-slate-400 font-bold"
+                                                    >
+                                                        {t.month}
+                                                    </text>
+                                                </g>
+                                            );
+                                        })}
+                                    </svg>
+                                );
+                            })()}
+                        </div>
+                    </div>
+                    
+                    <div className="mt-10 grid grid-cols-3 gap-6">
+                        <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-100">
+                            <p className="text-xs text-emerald-600 font-medium mb-1">价格峰值</p>
+                            <p className="text-lg font-bold text-emerald-700">¥{Math.max(...detailProduct.timeline.map(t => t.avgPrice)).toFixed(2)}</p>
+                        </div>
+                        <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                            <p className="text-xs text-slate-500 font-medium mb-1">价格底部</p>
+                            <p className="text-lg font-bold text-slate-700">¥{Math.min(...detailProduct.timeline.map(t => t.avgPrice)).toFixed(2)}</p>
+                        </div>
+                        <div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
+                            <p className="text-xs text-blue-600 font-medium mb-1">价格波动</p>
+                            <p className="text-lg font-bold text-blue-700">
+                                {(((Math.max(...detailProduct.timeline.map(t => t.avgPrice)) - Math.min(...detailProduct.timeline.map(t => t.avgPrice))) / Math.min(...detailProduct.timeline.map(t => t.avgPrice))) * 100 || 0).toFixed(1)}%
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
       )}
     </div>
