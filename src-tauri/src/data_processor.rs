@@ -44,7 +44,13 @@ pub fn scan_excel_files(dir: &Path) -> Result<Vec<(PathBuf, String)>> {
                             .to_string_lossy()
                             .starts_with("~$")
                         {
-                            files.push((file_path.to_path_buf(), type_name.clone()));
+                            // 确保返回的是绝对路径
+                            let abs_path = if file_path.is_absolute() {
+                                file_path.to_path_buf()
+                            } else {
+                                std::env::current_dir().unwrap_or_default().join(file_path)
+                            };
+                            files.push((abs_path, type_name.clone()));
                         }
                     }
                 }
