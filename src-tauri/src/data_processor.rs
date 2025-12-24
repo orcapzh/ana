@@ -64,6 +64,8 @@ pub fn validate_delivery_data(
     let mut all_items = Vec::new();
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
+    // 记录 (客户, 单号) 及其来源文件，用于同客户内的单号查重: (customer, order_no) -> file_path
+    let mut order_no_map: HashMap<(String, String), String> = HashMap::new();
 
     for file in files {
         match extract_delivery_data(file) {
@@ -74,16 +76,49 @@ pub fn validate_delivery_data(
                         error: "该文件未包含有效数据或格式不匹配".to_string(),
                     });
                 } else {
-                    // 验证日期
                     let mut file_has_error = false;
+                    
+                    // 1. 尝试从文件名提取日期
+                    let file_name = file.file_name().unwrap_or_default().to_string_lossy();
+                    let file_date = extract_date_from_filename(&file_name);
+                    
                     for item in &items {
+                        // 验证日期格式
                         if let Err(e) = validate_date_str(&item.date) {
                             errors.push(FileValidationError {
                                 file: file.to_string_lossy().to_string(),
                                 error: format!("日期错误 '{}': {}", item.date, e),
                             });
                             file_has_error = true;
-                            break; // 每个文件只报错一次
+                        } else {
+                            // 2. 验证文件名日期与内容日期是否一致
+                            if let Some(f_date) = file_date {
+                                if let Ok(c_date) = parse_date(&item.date) {
+                                    if f_date != c_date {
+                                         warnings.push(FileValidationError {
+                                            file: file.to_string_lossy().to_string(),
+                                            error: format!("日期不一致: 文件名日期 ({}) 与内容日期 ({}) 不同", f_date, c_date),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+
+                        // 3. 验证送货单号是否重复 (仅针对同一个客户)
+                        if !item.delivery_order_no.is_empty() {
+                            let order_key = (item.customer.clone(), item.delivery_order_no.clone());
+                            if let Some(existing_file) = order_no_map.get(&order_key) {
+                                let current_file = file.to_string_lossy().to_string();
+                                if *existing_file != current_file {
+                                    warnings.push(FileValidationError {
+                                        file: current_file.clone(),
+                                        error: format!("送货单号重复: 客户 '{}' 的单号 '{}' 已在文件 '{}' 中存在", 
+                                            item.customer, order_key.1, existing_file.split(|c| c == '/' || c == '\\').last().unwrap_or(existing_file)),
+                                    });
+                                }
+                            } else {
+                                order_no_map.insert(order_key, file.to_string_lossy().to_string());
+                            }
                         }
                     }
 
@@ -100,8 +135,38 @@ pub fn validate_delivery_data(
             }
         }
     }
+    
+    // 去重 warnings (因为循环中可能多次添加相同的警告)
+    warnings.sort_by(|a, b| a.file.cmp(&b.file).then(a.error.cmp(&b.error)));
+    warnings.dedup_by(|a, b| a.file == b.file && a.error == b.error);
 
     (all_items, errors, warnings)
+}
+
+fn extract_date_from_filename(filename: &str) -> Option<chrono::NaiveDate> {
+    use regex::Regex;
+    // 匹配 YYYY-MM-DD, YYYY.MM.DD, YYYYMMDD 等
+    // 简单起见，匹配 202x-xx-xx 或 202xxx-xx 等常见格式
+    // 优先匹配标准格式
+    if let Ok(re) = Regex::new(r"(\d{4})[-.](\d{1,2})[-.](\d{1,2})") {
+        if let Some(caps) = re.captures(filename) {
+            let y = caps[1].parse::<i32>().ok()?;
+            let m = caps[2].parse::<u32>().ok()?;
+            let d = caps[3].parse::<u32>().ok()?;
+            return chrono::NaiveDate::from_ymd_opt(y, m, d);
+        }
+    }
+    None
+}
+
+fn parse_date(date_str: &str) -> Result<chrono::NaiveDate, String> {
+    let formats = ["%Y-%m-%d", "%Y/%m/%d", "%Y年%m月%d日"];
+    for format in &formats {
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(date_str, format) {
+            return Ok(date);
+        }
+    }
+    Err("Invalid date".to_string())
 }
 
 fn validate_date_str(date_str: &str) -> Result<(), String> {

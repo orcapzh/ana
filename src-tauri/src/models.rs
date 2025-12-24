@@ -19,6 +19,8 @@ pub struct DeliveryItem {
     pub customer: String,
     /// 日期
     pub date: String,
+    /// 送货单号
+    pub delivery_order_no: String,
     /// 源文件
     pub source_file: String,
 }

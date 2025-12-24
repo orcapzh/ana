@@ -36,6 +36,59 @@ pub fn extract_delivery_data(file_path: &Path) -> Result<Vec<DeliveryItem>> {
         .map(|c| excel_date_to_string(c))
         .unwrap_or_default();
 
+    // 提取送货单号 (在前8行中查找包含 "No" 或 "单号" 的单元格)
+    let mut delivery_order_no = String::new();
+    for row_idx in 0..8 {
+        if let Some(row) = range.rows().nth(row_idx) {
+            for (col_idx, cell) in row.iter().enumerate() {
+                let cell_str = cell.to_string().trim().to_string();
+                let cell_lower = cell_str.to_lowercase();
+                
+                if cell_lower.contains("no") || cell_lower.contains("单号") {
+                    // 情况1: 单号在同一个单元格 (e.g. "No. 12345", "No:123", "No 123", "单号：123")
+                    // 尝试用常见的分隔符拆分
+                    let parts: Vec<&str> = cell_str.split(|c| c == ':' || c == '：' || c == '.' || c == ' ').collect();
+                    
+                    // 寻找第一个看起来像单号的部分（通常在 "No" 之后）
+                    for (p_idx, part) in parts.iter().enumerate() {
+                        let p_trimmed = part.trim();
+                        let p_lower = p_trimmed.to_lowercase();
+                        if (p_lower == "no" || p_lower == "单号") && p_idx + 1 < parts.len() {
+                            let val = parts[p_idx + 1].trim();
+                            if !val.is_empty() {
+                                delivery_order_no = val.to_string();
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if !delivery_order_no.is_empty() { break; }
+
+                    // 如果上面没找到，但单元格包含 "No" 且后面有数字 (e.g. "No12345")
+                    if cell_lower.starts_with("no") {
+                        let val = &cell_str[2..].trim();
+                        if !val.is_empty() {
+                            delivery_order_no = val.to_string();
+                            break;
+                        }
+                    }
+                    
+                    // 情况2: 单号在下一个单元格
+                    if let Some(next_cell) = row.get(col_idx + 1) {
+                        let next_str = next_cell.to_string().trim().to_string();
+                        if !next_str.is_empty() {
+                            delivery_order_no = next_str;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if !delivery_order_no.is_empty() {
+            break;
+        }
+    }
+
     // 数据从第9行开始（索引8）
     for (idx, row) in range.rows().enumerate() {
         if idx < 8 {
@@ -94,6 +147,7 @@ pub fn extract_delivery_data(file_path: &Path) -> Result<Vec<DeliveryItem>> {
             amount,
             customer: customer_name.clone(),
             date: date.clone(),
+            delivery_order_no: delivery_order_no.clone(),
             source_file: file_path.to_string_lossy().to_string(),
         });
     }

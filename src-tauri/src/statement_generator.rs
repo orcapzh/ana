@@ -15,13 +15,14 @@ pub fn generate_statement(
     let worksheet = workbook.add_worksheet();
 
     // 设置列宽
-    worksheet.set_column_width(0, 12)?;
-    worksheet.set_column_width(1, 20)?;
-    worksheet.set_column_width(2, 8)?;
-    worksheet.set_column_width(3, 10)?;
-    worksheet.set_column_width(4, 10)?;
-    worksheet.set_column_width(5, 12)?;
-    worksheet.set_column_width(6, 12)?;
+    worksheet.set_column_width(0, 12)?; // 日期
+    worksheet.set_column_width(1, 15)?; // 送货单号
+    worksheet.set_column_width(2, 20)?; // 品名规格
+    worksheet.set_column_width(3, 8)?;  // 单位
+    worksheet.set_column_width(4, 10)?; // 数量
+    worksheet.set_column_width(5, 10)?; // 单价
+    worksheet.set_column_width(6, 12)?; // 金额
+    worksheet.set_column_width(7, 12)?; // 备注
 
     // 标题格式
     let title_format = Format::new()
@@ -57,33 +58,33 @@ pub fn generate_statement(
         .set_border(FormatBorder::Thin);
 
     // 标题行（第1行）
-    worksheet.merge_range(0, 0, 0, 6, &config.company_name, &title_format)?;
+    worksheet.merge_range(0, 0, 0, 7, &config.company_name, &title_format)?;
     worksheet.set_row_height(0, 30)?;
 
     // 地址行（第2行）
     let address_text = format!("地址：{}", config.address);
-    worksheet.merge_range(1, 0, 1, 6, &address_text, &subtitle_format)?;
+    worksheet.merge_range(1, 0, 1, 7, &address_text, &subtitle_format)?;
 
     // 联系方式行（第3行）
     let contact_text = format!("电话：{}    传真：{}", config.phone, config.fax);
-    worksheet.merge_range(2, 0, 2, 6, &contact_text, &subtitle_format)?;
+    worksheet.merge_range(2, 0, 2, 7, &contact_text, &subtitle_format)?;
 
     // 客户和日期信息（第4行）
     let customer_text = format!("客户：{}", customer_name);
-    worksheet.merge_range(3, 0, 3, 1, &customer_text, &Format::new())?;
+    worksheet.merge_range(3, 0, 3, 2, &customer_text, &Format::new())?;
 
     let month_text = format!("{}对账单", year_month);
     worksheet.merge_range(
         3,
-        2,
         3,
-        4,
+        3,
+        5,
         &month_text,
         &Format::new().set_align(FormatAlign::Center),
     )?;
 
     // 表头（第5行）
-    let headers = ["送货日期", "品名规格", "单位", "数量", "单价", "金额", "备注"];
+    let headers = ["送货日期", "送货单号", "品名规格", "单位", "数量", "单价", "金额", "备注"];
     for (col, header) in headers.iter().enumerate() {
         worksheet.write_with_format(4, col as u16, *header, &header_format)?;
     }
@@ -100,24 +101,27 @@ pub fn generate_statement(
         let date_str = format_date(&item.date);
         worksheet.write_with_format(row, 0, &date_str, &cell_format)?;
 
+        // 送货单号
+        worksheet.write_with_format(row, 1, &item.delivery_order_no, &cell_format)?;
+
         // 品名规格
         let product_spec = format!("{} {}", item.product_name, item.spec);
-        worksheet.write_with_format(row, 1, &product_spec, &wrap_format)?;
+        worksheet.write_with_format(row, 2, &product_spec, &wrap_format)?;
 
         // 单位
-        worksheet.write_with_format(row, 2, &item.unit, &cell_format)?;
+        worksheet.write_with_format(row, 3, &item.unit, &cell_format)?;
 
         // 数量
-        worksheet.write_with_format(row, 3, item.quantity, &cell_format)?;
+        worksheet.write_with_format(row, 4, item.quantity, &cell_format)?;
 
         // 单价
-        worksheet.write_with_format(row, 4, item.unit_price, &cell_format)?;
+        worksheet.write_with_format(row, 5, item.unit_price, &cell_format)?;
 
         // 金额
-        worksheet.write_with_format(row, 5, item.amount, &cell_format)?;
+        worksheet.write_with_format(row, 6, item.amount, &cell_format)?;
 
         // 备注
-        worksheet.write_with_format(row, 6, "", &cell_format)?;
+        worksheet.write_with_format(row, 7, "", &cell_format)?;
 
         total_amount += item.amount;
     }
@@ -132,7 +136,7 @@ pub fn generate_statement(
         summary_row,
         0,
         summary_row,
-        2,
+        3,
         &summary_text,
         &Format::new().set_font_size(11),
     )?;
@@ -141,9 +145,9 @@ pub fn generate_statement(
     let amount_text = format!("人民币小写：{:.2}元", total_amount);
     worksheet.merge_range(
         summary_row,
-        3,
+        4,
         summary_row,
-        6,
+        7,
         &amount_text,
         &Format::new()
             .set_font_size(11)

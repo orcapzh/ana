@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, ask } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -43,6 +43,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [result, setResult] = useState(null);
   const logEndRef = useRef(null);
+  const isMounted = useRef(false);
 
   // Dashboard State
   const [currentView, setCurrentView] = useState("preview"); // 'preview' | 'analysis'
@@ -55,8 +56,15 @@ function App() {
   // Analysis State
   const [analysisTarget, setAnalysisTarget] = useState("all"); // 'all' or customerName
 
+  // Success Modal State
+  const [successModalOpen, setSuccessModalOpen] = useState(false);
+  const [generatedFilePath, setGeneratedFilePath] = useState("");
+
   useEffect(() => {
-    loadConfig();
+    if (!isMounted.current) {
+        loadConfig();
+        isMounted.current = true;
+    }
     const unlisten = listen("log", (event) => {
       addLog(event.payload, "info");
     });
@@ -67,6 +75,14 @@ function App() {
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
+
+    // 如果最新的一条日志是错误或警告，自动展开日志面板
+    if (logs.length > 0) {
+      const lastLog = logs[logs.length - 1];
+      if (lastLog.level === "error" || lastLog.level === "warning") {
+        setShowLogs(true);
+      }
+    }
   }, [logs]);
 
   const loadConfig = async () => {
@@ -132,7 +148,7 @@ function App() {
       }
 
       if (result.warnings && result.warnings.length > 0) {
-        addLog(`注意: 发现 ${result.warnings.length} 个文件可能被跳过`, "warning");
+        addLog(`注意: 发现 ${result.warnings.length} 个文件存在警告⚠️`, "warning");
         result.warnings.forEach((warn) => {
           const fileName = warn.file.split(/[/\\]/).pop();
           addLog(`${fileName}: ${warn.error}`, "warning");
@@ -196,25 +212,70 @@ function App() {
     }
   };
 
-  const handleProcess = async () => {
-    if (!config.raw_data_path || !config.output_path) {
-      addLog("请先在设置中配置原始数据文件夹和输出文件夹", "error");
-      setShowSettings(true);
-      return;
+  const handleGenerateSingle = async () => {
+    if (!selectedCustomer || !selectedMonth) return;
+
+    // 检查配置
+    if (!config.output_path) {
+        addLog("请先配置输出文件夹", "error");
+        setShowSettings(true);
+        return;
     }
+
+    const items = dashboardData.map[selectedCustomer]?.[selectedMonth] || [];
+    if (items.length === 0) {
+        addLog("当前选择无数据", "error");
+        return;
+    }
+
     setIsProcessing(true);
-    setLogs([]);
-    setResult(null);
+
+    const callGenerate = async (overwrite = false) => {
+        const result = await invoke("generate_single_statement", {
+            config,
+            items,
+            customer: selectedCustomer,
+            month: selectedMonth,
+            overwrite
+        });
+
+        if (result.success) {
+            addLog(result.message, "success");
+            const filePath = result.message.replace("已生成: ", "");
+            setGeneratedFilePath(filePath);
+            setSuccessModalOpen(true);
+        }
+    };
+
     try {
-      addLog("开始处理送货单...", "info");
-      const result = await invoke("process_delivery_orders", { config });
-      setResult(result);
-      addLog("处理完成！", "success");
-      // 重新扫描以更新数据
-      scanAndValidate(config);
+      addLog(`开始生成对账单: ${selectedCustomer} ${selectedMonth}...`, "info");
+      await callGenerate(false);
     } catch (error) {
-      console.error("处理失败:", error);
-      addLog(`处理失败: ${error}`, "error");
+      // Normalize error message
+      const errorStr = typeof error === 'string' ? error : (error?.message || JSON.stringify(error));
+
+      if (errorStr.includes("FILE_EXISTS")) {
+          const confirmed = await ask(`对账单已存在，是否覆盖？\n\n客户: ${selectedCustomer}\n月份: ${selectedMonth}`, {
+              title: "确认覆盖",
+              type: "warning",
+              okLabel: "覆盖",
+              cancelLabel: "取消"
+          });
+
+          if (confirmed) {
+              try {
+                  await callGenerate(true);
+              } catch (retryError) {
+                  console.error("覆盖生成失败:", retryError);
+                  addLog(`覆盖生成失败: ${retryError}`, "error");
+              }
+          } else {
+              addLog("已取消生成", "info");
+          }
+      } else {
+          console.error("生成失败:", error);
+          addLog(`生成失败: ${errorStr}`, "error");
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -315,7 +376,7 @@ function App() {
                      key = `${cnMatch[1]}-${cnMatch[2].padStart(2, '0')}`;
                  }
             }
-            
+
             if (!monthlyStats[key]) monthlyStats[key] = 0;
             monthlyStats[key] += item.amount;
         });
@@ -368,18 +429,10 @@ function App() {
               <FileSpreadsheet className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="text-base font-semibold text-slate-900 leading-none">对账单生成器</h1>
+              <h1 className="text-base font-semibold text-slate-900 leading-none">百惠行</h1>
             </div>
           </div>
           <div className="flex items-center gap-3">
-             <button
-              onClick={handleProcess}
-              disabled={isProcessing}
-              className="px-4 py-1.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-300 text-white rounded-lg flex items-center gap-2 text-sm font-medium transition-colors"
-            >
-              {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-              {isProcessing ? "生成中..." : "开始生成"}
-            </button>
             <button
               onClick={() => setShowSettings(!showSettings)}
               className={`p-2 rounded-lg transition-colors ${
@@ -596,31 +649,76 @@ function App() {
           )}
 
           {currentView === "analysis" && (
-            <div className="flex-1 p-4 bg-slate-50 overflow-y-auto">
-               <div className="text-sm text-slate-600 mb-6 leading-relaxed">
-                  <p>通过多维度数据分析，掌握经营状况。</p>
-                  <p className="mt-2 text-xs text-slate-400">您可以切换全局或单一客户视角，查看销售趋势和产品分布。</p>
-               </div>
+            <>
+              <div className="p-4 border-b border-slate-200">
+                 <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="搜索客户..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                 </div>
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                 {isLoadingData ? (
+                     <div className="p-8 text-center text-slate-400 text-sm">
+                         <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
+                         加载数据中...
+                     </div>
+                 ) : (
+                    <div className="divide-y divide-slate-100">
+                      {/* Global Option */}
+                      <button
+                          onClick={() => setAnalysisTarget("all")}
+                          className={`w-full text-left px-4 py-3 text-sm hover:bg-slate-50 transition-colors flex items-center gap-3 ${
+                            analysisTarget === "all" ? "bg-emerald-50 text-emerald-700 font-medium" : "text-slate-700"
+                          }`}
+                        >
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                             analysisTarget === "all" ? "bg-emerald-100" : "bg-slate-100 text-slate-400"
+                          }`}>
+                             <LayoutDashboard className="w-4 h-4" />
+                          </div>
+                          <span className="truncate">全公司</span>
+                      </button>
 
-               <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                   <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">分析控制台</h3>
-                   <div className="space-y-3">
-                       <label className="block text-sm font-medium text-slate-700">分析对象</label>
-                       <select
-                          value={analysisTarget}
-                          onChange={(e) => setAnalysisTarget(e.target.value)}
-                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                       >
-                           <option value="all">全公司 (All Customers)</option>
-                           <optgroup label="单一客户">
-                               {dashboardData.customers.map(c => (
-                                   <option key={c} value={c}>{c}</option>
-                               ))}
-                           </optgroup>
-                       </select>
-                   </div>
-               </div>
-            </div>
+                      {/* Customer List */}
+                      {filteredCustomers.length === 0 ? (
+                        <div className="p-8 text-center text-slate-400 text-sm">
+                            无匹配客户
+                        </div>
+                      ) : (
+                        filteredCustomers.map(customer => (
+                            <button
+                            key={customer}
+                            onClick={() => setAnalysisTarget(customer)}
+                            className={`w-full text-left px-4 py-3 text-sm hover:bg-slate-50 transition-colors flex items-center gap-3 ${
+                                analysisTarget === customer ? "bg-emerald-50 text-emerald-700 font-medium" : "text-slate-700"
+                            }`}
+                            >
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                                analysisTarget === customer ? "bg-emerald-100" : "bg-slate-100 text-slate-400"
+                            }`}>
+                                <Users className="w-4 h-4" />
+                            </div>
+                            <span className="truncate">{customer}</span>
+                            </button>
+                        ))
+                      )}
+                    </div>
+                 )}
+              </div>
+
+              <div className="p-3 border-t border-slate-200 bg-slate-50">
+                 <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <Database className="w-3 h-3" />
+                    <span>共 {dashboardData.customers.length} 个客户</span>
+                 </div>
+              </div>
+            </>
           )}
         </div>
 
@@ -634,28 +732,40 @@ function App() {
                  </div>
                ) : (
                  <>
-                   {/* Month Tabs */}
-                   <div className="bg-white border-b border-slate-200 px-6 py-2 flex gap-2 overflow-x-auto">
-                      {customerMonths.length === 0 ? (
-                          <span className="text-sm text-slate-400 py-2">该客户暂无月份数据</span>
-                      ) : (
-                          customerMonths.map(month => (
-                            <button
-                              key={month}
-                              onClick={() => setSelectedMonth(month)}
-                              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap ${
-                                selectedMonth === month
-                                  ? "bg-slate-900 text-white"
-                                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                              }`}
-                            >
-                              {month}
-                            </button>
-                          ))
-                      )}
-                   </div>
+                                      {/* Month Tabs & Actions */}
+                                      <div className="bg-white border-b border-slate-200 px-6 py-2 flex items-center justify-between gap-4">
+                                         <div className="flex gap-2 overflow-x-auto scrollbar-hide">
+                                             {customerMonths.length === 0 ? (
+                                                 <span className="text-sm text-slate-400 py-2">该客户暂无月份数据</span>
+                                             ) : (
+                                                 customerMonths.map(month => (
+                                                   <button
+                                                     key={month}
+                                                     onClick={() => setSelectedMonth(month)}
+                                                     className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap ${
+                                                       selectedMonth === month
+                                                         ? "bg-slate-900 text-white"
+                                                         : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                                                     }`}
+                                                   >
+                                                     {month}
+                                                   </button>
+                                                 ))
+                                             )}
+                                         </div>
 
-                   {/* Data Table */}
+                                         <div className="flex-shrink-0">
+                                            <button
+                                             onClick={handleGenerateSingle}
+                                             disabled={isProcessing || !selectedMonth}
+                                             className="px-4 py-1.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-300 text-white rounded-lg flex items-center gap-2 text-sm font-medium transition-colors"
+                                           >
+                                             {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                                             {isProcessing ? "生成中..." : "生成当前对账单"}
+                                           </button>
+                                         </div>
+                                      </div>
+                                      {/* Data Table */}
                    <div className="flex-1 overflow-auto p-6">
                      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                        <div className="overflow-x-auto">
@@ -663,19 +773,20 @@ function App() {
                           <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-medium">
                             <tr>
                               <th className="px-4 py-3 w-32">日期</th>
+                              <th className="px-4 py-3 w-32">送货单号</th>
                               <th className="px-4 py-3">货名</th>
                               <th className="px-4 py-3 w-24">规格</th>
                               <th className="px-4 py-3 w-20 text-right">数量</th>
                               <th className="px-4 py-3 w-16 text-center">单位</th>
                               <th className="px-4 py-3 w-24 text-right">单价</th>
-                              <th className="px-4 py-3 w-24 text-right">金额</th>
-                              <th className="px-4 py-3 w-32 text-slate-400 font-normal">来源</th>
+                              <th className="px-4 py-3 w-30 text-right">金额</th>
+                              <th className="px-4 py-3 w-42 text-slate-400 font-normal">来源</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
                             {currentItems.length === 0 ? (
                               <tr>
-                                <td colSpan="8" className="px-4 py-8 text-center text-slate-400">
+                                <td colSpan="9" className="px-4 py-8 text-center text-slate-400">
                                   无数据
                                 </td>
                               </tr>
@@ -683,6 +794,7 @@ function App() {
                               currentItems.map((item, idx) => (
                                 <tr key={idx} className="hover:bg-slate-50">
                                   <td className="px-4 py-3 text-slate-600">{item.date}</td>
+                                  <td className="px-4 py-3 text-slate-600">{item.delivery_order_no}</td>
                                   <td
                                     className="px-4 py-3 text-slate-900 font-medium truncate max-w-[200px]"
                                     title={item.product_name}
@@ -711,7 +823,7 @@ function App() {
                           {currentItems.length > 0 && (
                             <tfoot className="bg-slate-50 border-t border-slate-200 font-semibold text-slate-900">
                               <tr>
-                                <td colSpan="3" className="px-4 py-3 text-right">本月合计:</td>
+                                <td colSpan="4" className="px-4 py-3 text-right">本月合计:</td>
                                 <td className="px-4 py-3 text-right">{currentSummary.quantity}</td>
                                 <td className="px-4 py-3"></td>
                                 <td className="px-4 py-3 text-right"></td>
@@ -803,7 +915,7 @@ function App() {
                                                                 {item.label}: ¥{item.value.toLocaleString()}
                                                             </div>
                                                             <div className="w-full flex-1 flex items-end justify-center">
-                                                                 <div 
+                                                                 <div
                                                                     className="w-full bg-emerald-100 hover:bg-emerald-200 rounded-t-sm transition-all relative overflow-hidden group-hover:bg-emerald-300 min-h-[4px]"
                                                                     style={{ height: `${Math.max(0, (item.value / maxVal) * 100)}%` }}
                                                                 />
@@ -904,6 +1016,41 @@ function App() {
         </div>
 
       </div>
+
+      {/* Success Modal */}
+      {successModalOpen && (
+        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 transform transition-all animate-in zoom-in-95 duration-200">
+            <div className="flex flex-col items-center text-center mb-6">
+              <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mb-4">
+                <Check className="w-6 h-6" />
+              </div>
+              <h3 className="text-lg font-semibold text-slate-900">对账单生成成功</h3>
+              <p className="text-xs text-slate-500 mt-2 break-all bg-slate-50 p-2 rounded border border-slate-100">
+                {generatedFilePath}
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setSuccessModalOpen(false)}
+                className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 font-medium transition-colors"
+              >
+                关闭
+              </button>
+              <button
+                onClick={() => {
+                  openFile(generatedFilePath);
+                  setSuccessModalOpen(false);
+                }}
+                className="flex-1 px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 font-medium transition-colors flex items-center justify-center gap-2"
+              >
+                <ExternalLink className="w-4 h-4" />
+                打开文件
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -6,7 +6,7 @@ mod statement_generator;
 use data_processor::{
     group_by_customer_month, merge_delivery_data, scan_excel_files, validate_delivery_data,
 };
-use models::{AppConfig, ProcessResult, ScanResult};
+use models::{AppConfig, DeliveryItem, ProcessResult, ScanResult};
 use statement_generator::generate_statement;
 use std::fs;
 use std::path::PathBuf;
@@ -107,6 +107,53 @@ async fn scan_and_validate(config: AppConfig) -> Result<ScanResult, String> {
         errors,
         warnings,
         items,
+    })
+}
+
+#[tauri::command]
+async fn generate_single_statement(
+    app: tauri::AppHandle,
+    config: AppConfig,
+    items: Vec<DeliveryItem>,
+    customer: String,
+    month: String,
+    overwrite: bool,
+) -> Result<ProcessResult, String> {
+    let output_path = PathBuf::from(&config.output_path);
+
+    // 创建输出目录
+    if !output_path.exists() {
+        fs::create_dir_all(&output_path).map_err(|e| format!("创建输出目录失败: {}", e))?;
+    }
+
+    // 创建客户文件夹
+    let customer_dir = output_path.join(&customer);
+    if !customer_dir.exists() {
+        fs::create_dir_all(&customer_dir).map_err(|e| format!("创建客户文件夹失败: {}", e))?;
+    }
+
+    // 生成文件名 (使用传入的月份字符串，例如 2023年5月)
+    let statement_file = customer_dir.join(format!("statement_{}_{}.xlsx", customer, month));
+
+    // 检查文件是否存在
+    if statement_file.exists() && !overwrite {
+        return Err("FILE_EXISTS".to_string());
+    }
+
+    let _ = app.emit("log", format!("正在生成对账单: {} {}", customer, month));
+
+    // 生成对账单
+    generate_statement(&items, &customer, &month, &statement_file, &config)
+        .map_err(|e| format!("生成对账单失败: {}", e))?;
+
+    let _ = app.emit("log", format!("生成成功: {:?}", statement_file));
+
+    Ok(ProcessResult {
+        success: true,
+        message: format!("已生成: {}", statement_file.to_string_lossy()),
+        generated_count: 1,
+        skipped_count: 0,
+        output_path: customer_dir.to_string_lossy().to_string(),
     })
 }
 
@@ -228,7 +275,8 @@ pub fn run() {
             load_config,
             save_config,
             process_delivery_orders,
-            scan_and_validate
+            scan_and_validate,
+            generate_single_statement
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
