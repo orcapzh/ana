@@ -23,6 +23,13 @@ pub struct DeliveryItem {
     pub delivery_order_no: String,
     /// 源文件
     pub source_file: String,
+    /// 客户类型 (monthly: 月结, cash: 现金)
+    #[serde(default = "default_customer_type")]
+    pub customer_type: String,
+}
+
+fn default_customer_type() -> String {
+    "monthly".to_string()
 }
 
 /// 汇总数据

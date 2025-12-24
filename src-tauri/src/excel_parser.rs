@@ -4,7 +4,7 @@ use calamine::{open_workbook_auto, Data, Reader};
 use std::path::Path;
 
 /// 从 Excel 文件中提取送货单数据
-pub fn extract_delivery_data(file_path: &Path) -> Result<Vec<DeliveryItem>> {
+pub fn extract_delivery_data(file_path: &Path, customer_type: &str) -> Result<Vec<DeliveryItem>> {
     let mut workbook = open_workbook_auto(file_path)
         .with_context(|| format!("无法打开文件: {:?}", file_path))?;
 
@@ -149,6 +149,7 @@ pub fn extract_delivery_data(file_path: &Path) -> Result<Vec<DeliveryItem>> {
             date: date.clone(),
             delivery_order_no: delivery_order_no.clone(),
             source_file: file_path.to_string_lossy().to_string(),
+            customer_type: customer_type.to_string(),
         });
     }
 

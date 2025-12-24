@@ -72,11 +72,11 @@ async fn scan_and_validate(config: AppConfig) -> Result<ScanResult, String> {
         });
     }
 
-    // 扫描文件
-    let files =
+    // 扫描文件 (会自动识别一级目录作为客户类型)
+    let files_with_type =
         scan_excel_files(&raw_data_path).map_err(|e| format!("扫描文件失败: {}", e))?;
 
-    if files.is_empty() {
+    if files_with_type.is_empty() {
         return Ok(ScanResult {
             success: true,
             message: "未找到 Excel 文件".to_string(),
@@ -89,7 +89,7 @@ async fn scan_and_validate(config: AppConfig) -> Result<ScanResult, String> {
     }
 
     // 验证数据
-    let (items, errors, warnings) = validate_delivery_data(&files);
+    let (items, errors, warnings) = validate_delivery_data(&files_with_type);
 
     Ok(ScanResult {
         success: errors.is_empty(),
@@ -102,8 +102,8 @@ async fn scan_and_validate(config: AppConfig) -> Result<ScanResult, String> {
         } else {
             format!("发现 {} 个文件存在问题", errors.len())
         },
-        total_files: files.len(),
-        valid_files: files.len() - errors.len() - warnings.len(),
+        total_files: files_with_type.len(),
+        valid_files: files_with_type.len() - errors.len() - warnings.len(),
         errors,
         warnings,
         items,
@@ -171,20 +171,20 @@ async fn process_delivery_orders(
     // 发送日志
     let _ = app.emit("log", "开始扫描 Excel 文件...");
 
-    // 扫描 Excel 文件
-    let files =
+    // 扫描 Excel 文件 (自动识别类型)
+    let files_with_type =
         scan_excel_files(&raw_data_path).map_err(|e| format!("扫描文件失败: {}", e))?;
 
-    let _ = app.emit("log", format!("找到 {} 个 Excel 文件", files.len()));
+    let _ = app.emit("log", format!("找到 {} 个 Excel 文件", files_with_type.len()));
 
-    if files.is_empty() {
+    if files_with_type.is_empty() {
         return Err("未找到任何 Excel 文件".to_string());
     }
 
     // 合并数据
     let _ = app.emit("log", "正在合并送货单数据...");
     let all_items =
-        merge_delivery_data(&files).map_err(|e| format!("合并数据失败: {}", e))?;
+        merge_delivery_data(&files_with_type).map_err(|e| format!("合并数据失败: {}", e))?;
 
     let _ = app.emit("log", format!("共提取 {} 条数据记录", all_items.len()));
 

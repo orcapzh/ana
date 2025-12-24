@@ -24,7 +24,8 @@ import {
   Award,
   BarChart3,
   Filter,
-  PieChart
+  PieChart,
+  RefreshCw
 } from "lucide-react";
 
 function App() {
@@ -51,6 +52,7 @@ function App() {
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [selectedMonth, setSelectedMonth] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [filterType, setFilterType] = useState("all"); // 'all' | 'monthly' | 'cash' | etc.
   const [isLoadingData, setIsLoadingData] = useState(false);
 
   // Analysis State
@@ -100,11 +102,21 @@ function App() {
 
   const processData = (items) => {
     const map = {};
-    const customerSet = new Set();
+    const customerLastDate = {};
+    const customerTypeMap = {};
 
     items.forEach((item) => {
       if (!item.customer) return;
-      customerSet.add(item.customer);
+
+      // 记录最后日期用于排序
+      if (!customerLastDate[item.customer] || item.date > customerLastDate[item.customer]) {
+        customerLastDate[item.customer] = item.date;
+      }
+
+      // 记录客户类型
+      if (!customerTypeMap[item.customer]) {
+        customerTypeMap[item.customer] = item.customer_type;
+      }
 
       // 解析年月 YYYY-MM
       let month = "未知";
@@ -124,9 +136,15 @@ function App() {
       map[item.customer][month].push(item);
     });
 
+    // 按最近日期排序客户
+    const sortedCustomers = Object.keys(map).sort((a, b) => {
+      return customerLastDate[b].localeCompare(customerLastDate[a]);
+    });
+
     return {
       map,
-      customers: Array.from(customerSet).sort(),
+      customers: sortedCustomers,
+      customerTypeMap,
       allItems: items,
     };
   };
@@ -304,11 +322,22 @@ function App() {
   };
 
   const filteredCustomers = useMemo(() => {
-    if (!searchTerm) return dashboardData.customers;
-    return dashboardData.customers.filter(c =>
-      c.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }, [dashboardData.customers, searchTerm]);
+    let list = dashboardData.customers;
+
+    // 1. 类型过滤
+    if (filterType !== 'all') {
+      list = list.filter(c => dashboardData.customerTypeMap[c] === filterType);
+    }
+
+    // 2. 搜索过滤
+    if (searchTerm) {
+      list = list.filter(c =>
+        c.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+
+    return list;
+  }, [dashboardData.customers, dashboardData.customerTypeMap, searchTerm, filterType]);
 
   // 获取当前选中客户的所有月份，并排序
   const customerMonths = useMemo(() => {
@@ -387,6 +416,7 @@ function App() {
     let rankingTitle = "";
     let rankingData = [];
     let rankingType = ""; // 'customer' or 'product'
+    let productTrends = []; // Product Price Trends
 
     if (analysisTarget === 'all') {
         rankingTitle = "客户贡献排行 (Top 10)";
@@ -404,18 +434,60 @@ function App() {
         rankingTitle = "热销产品排行 (Top 10)";
         rankingType = 'product';
         const productMap = {};
+        // Trend Map: Key = "Name::Spec"
+        const trendMap = {};
+
         items.forEach(item => {
+            // Ranking Logic
             if(!productMap[item.product_name]) productMap[item.product_name] = { amount: 0, quantity: 0 };
             productMap[item.product_name].amount += item.amount;
             productMap[item.product_name].quantity += item.quantity;
+
+            // Trend Logic
+            const key = `${item.product_name}::${item.spec}`;
+            if (!trendMap[key]) {
+                trendMap[key] = {
+                    name: item.product_name,
+                    spec: item.spec,
+                    history: {} // month -> { totalUnit: 0, count: 0 }
+                };
+            }
+            
+            // Extract month key (YYYY-MM)
+            let monthKey = "Unknown";
+            const match = item.date.match(/^(\d{4})[-/.](\d{1,2})[-/.]\d{1,2}/);
+            if (match) {
+                monthKey = `${match[1]}-${match[2].padStart(2, '0')}`;
+            } else {
+                 const cnMatch = item.date.match(/^(\d{4})年(\d{1,2})月/);
+                 if (cnMatch) {
+                     monthKey = `${cnMatch[1]}-${cnMatch[2].padStart(2, '0')}`;
+                 }
+            }
+
+            if (!trendMap[key].history[monthKey]) {
+                trendMap[key].history[monthKey] = { totalUnit: 0, count: 0 };
+            }
+            trendMap[key].history[monthKey].totalUnit += item.unit_price;
+            trendMap[key].history[monthKey].count += 1;
         });
+
         rankingData = Object.entries(productMap)
             .map(([name, stats]) => ({name, value: stats.amount, quantity: stats.quantity}))
             .sort((a,b) => b.value - a.value)
             .slice(0, 10);
+            
+        // Process Trend Data
+        productTrends = Object.values(trendMap).map(p => {
+            const timeline = Object.entries(p.history).map(([m, data]) => ({
+                month: m,
+                avgPrice: data.totalUnit / data.count,
+            })).sort((a, b) => a.month.localeCompare(b.month));
+            return { ...p, timeline };
+        }).sort((a, b) => a.name.localeCompare(b.name));
     }
 
-    return { totalAmount, totalQuantity, totalOrders, monthlyTrend, rankingTitle, rankingData, rankingType };
+    return { totalAmount, totalQuantity, totalOrders, monthlyTrend, rankingTitle, rankingData, rankingType, productTrends };
   }, [dashboardData.allItems, analysisTarget]);
 
 
@@ -433,6 +505,14 @@ function App() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => scanAndValidate(config)}
+              disabled={isLoadingData || !config.raw_data_path}
+              title="重新载入数据"
+              className="p-2 hover:bg-slate-100 text-slate-600 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <RefreshCw className={`w-5 h-5 ${isLoadingData ? "animate-spin" : ""}`} />
+            </button>
             <button
               onClick={() => setShowSettings(!showSettings)}
               className={`p-2 rounded-lg transition-colors ${
@@ -592,11 +672,10 @@ function App() {
               经营分析
             </button>
           </div>
-
           {currentView === "preview" && (
             <>
               <div className="p-4 border-b border-slate-200">
-                 <div className="relative">
+                 <div className="relative mb-3">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                     <input
                       type="text"
@@ -605,6 +684,34 @@ function App() {
                       onChange={(e) => setSearchTerm(e.target.value)}
                       className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     />
+                 </div>
+                 {/* Type Filter */}
+                 <div className="flex gap-1 overflow-x-auto scrollbar-hide">
+                    <button
+                      onClick={() => setFilterType('all')}
+                      className={`px-2 py-1 text-[10px] rounded-md border whitespace-nowrap transition-colors ${
+                        filterType === 'all'
+                        ? 'bg-slate-900 text-white border-slate-900'
+                        : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      全部
+                    </button>
+                    {Array.from(new Set(Object.values(dashboardData.customerTypeMap || {})))
+                      .filter(t => t !== "默认")
+                      .map(type => (
+                        <button
+                          key={type}
+                          onClick={() => setFilterType(type)}
+                          className={`px-2 py-1 text-[10px] rounded-md border whitespace-nowrap transition-colors ${
+                            filterType === type
+                            ? 'bg-slate-900 text-white border-slate-900'
+                            : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          {type}
+                        </button>
+                      ))}
                  </div>
               </div>
               <div className="flex-1 overflow-y-auto">
@@ -632,7 +739,31 @@ function App() {
                           }`}>
                              <Users className="w-4 h-4" />
                           </div>
-                          <span className="truncate">{customer}</span>
+                          <span className="truncate flex-1">{customer}</span>
+                          {(() => {
+                              const months = Object.keys(dashboardData.map[customer] || {});
+                              if (months.length > 0 && dashboardData.map[customer][months[0]].length > 0) {
+                                  const type = dashboardData.map[customer][months[0]][0].customer_type;
+                                  // 默认不显示 "默认" 类型
+                                  if (type === "默认") return null;
+
+                                  const isCash = type.includes('现金');
+                                  const isTaobao = type.includes('淘宝');
+
+                                  return (
+                                      <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                                          isCash
+                                          ? 'bg-amber-50 text-amber-600 border-amber-200'
+                                          : isTaobao
+                                            ? 'bg-orange-50 text-orange-600 border-orange-200'
+                                            : 'bg-blue-50 text-blue-600 border-blue-200'
+                                      }`}>
+                                          {type}
+                                      </span>
+                                  );
+                              }
+                              return null;
+                          })()}
                         </button>
                       ))}
                     </div>
@@ -651,7 +782,7 @@ function App() {
           {currentView === "analysis" && (
             <>
               <div className="p-4 border-b border-slate-200">
-                 <div className="relative">
+                 <div className="relative mb-3">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                     <input
                       type="text"
@@ -660,6 +791,34 @@ function App() {
                       onChange={(e) => setSearchTerm(e.target.value)}
                       className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     />
+                 </div>
+                 {/* Type Filter */}
+                 <div className="flex gap-1 overflow-x-auto scrollbar-hide">
+                    <button
+                      onClick={() => setFilterType('all')}
+                      className={`px-2 py-1 text-[10px] rounded-md border whitespace-nowrap transition-colors ${
+                        filterType === 'all' 
+                        ? 'bg-slate-900 text-white border-slate-900' 
+                        : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      全部
+                    </button>
+                    {Array.from(new Set(Object.values(dashboardData.customerTypeMap || {})))
+                      .filter(t => t !== "默认")
+                      .map(type => (
+                        <button
+                          key={type}
+                          onClick={() => setFilterType(type)}
+                          className={`px-2 py-1 text-[10px] rounded-md border whitespace-nowrap transition-colors ${
+                            filterType === type 
+                            ? 'bg-slate-900 text-white border-slate-900' 
+                            : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          {type}
+                        </button>
+                      ))}
                  </div>
               </div>
               <div className="flex-1 overflow-y-auto">
@@ -704,7 +863,31 @@ function App() {
                             }`}>
                                 <Users className="w-4 h-4" />
                             </div>
-                            <span className="truncate">{customer}</span>
+                            <span className="truncate flex-1">{customer}</span>
+                            {(() => {
+                              const months = Object.keys(dashboardData.map[customer] || {});
+                              if (months.length > 0 && dashboardData.map[customer][months[0]].length > 0) {
+                                  const type = dashboardData.map[customer][months[0]][0].customer_type;
+                                  // 默认不显示 "默认" 类型
+                                  if (type === "默认") return null;
+
+                                  const isCash = type.includes('现金');
+                                  const isTaobao = type.includes('淘宝');
+
+                                  return (
+                                      <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                                          isCash
+                                          ? 'bg-amber-50 text-amber-600 border-amber-200'
+                                          : isTaobao
+                                            ? 'bg-orange-50 text-orange-600 border-orange-200'
+                                            : 'bg-blue-50 text-blue-600 border-blue-200'
+                                      }`}>
+                                          {type}
+                                      </span>
+                                  );
+                              }
+                              return null;
+                            })()}
                             </button>
                         ))
                       )}
@@ -955,6 +1138,88 @@ function App() {
                           </div>
                        </div>
                     </div>
+
+                    {/* Product Price Trends (Only for Single Customer) */}
+                    {analysisTarget !== 'all' && analysisData.productTrends.length > 0 && (
+                        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+                                <div className="flex items-center gap-2 font-medium text-slate-900">
+                                    <TrendingUp className="w-4 h-4 text-emerald-500" />
+                                    商品价格走势 (Product Price Trends)
+                                </div>
+                            </div>
+                            <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {analysisData.productTrends.map((product, idx) => {
+                                    const prices = product.timeline.map(t => t.avgPrice);
+                                    const minPrice = Math.min(...prices);
+                                    const maxPrice = Math.max(...prices);
+                                    const latestPrice = prices[prices.length - 1];
+                                    
+                                    // SVG Points Calculation
+                                    const width = 100;
+                                    const height = 40;
+                                    const points = product.timeline.map((t, i) => {
+                                        const x = (i / (product.timeline.length - 1 || 1)) * width;
+                                        const range = maxPrice - minPrice;
+                                        const y = range === 0 
+                                            ? height / 2 
+                                            : height - ((t.avgPrice - minPrice) / range) * height;
+                                        return `${x},${y}`;
+                                    }).join(" ");
+
+                                    return (
+                                        <div key={idx} className="border border-slate-100 rounded-lg p-3 hover:border-emerald-200 transition-colors bg-slate-50/50">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <div>
+                                                    <div className="text-xs font-medium text-slate-900 truncate max-w-[180px]" title={product.name}>{product.name}</div>
+                                                    <div className="text-[10px] text-slate-500">{product.spec}</div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <div className="text-xs font-bold text-slate-900">¥{latestPrice.toFixed(2)}</div>
+                                                    {product.timeline.length > 1 && (
+                                                        <div className={`text-[10px] ${latestPrice > product.timeline[0].avgPrice ? 'text-red-500' : 'text-emerald-500'}`}>
+                                                            {latestPrice > product.timeline[0].avgPrice ? '↑' : latestPrice < product.timeline[0].avgPrice ? '↓' : '-'}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            
+                                            {/* Sparkline */}
+                                            <div className="h-10 w-full relative">
+                                                <svg viewBox="0 0 100 40" className="w-full h-full overflow-visible preserve-3d">
+                                                    {/* Reference Line (Mid) if flat, or Grid? Just line for now */}
+                                                    <polyline
+                                                        points={points}
+                                                        fill="none"
+                                                        stroke={latestPrice > (product.timeline[0]?.avgPrice || 0) ? "#f87171" : "#10b981"}
+                                                        strokeWidth="2"
+                                                        vectorEffect="non-scaling-stroke"
+                                                        strokeLinecap="round"
+                                                        strokeLinejoin="round"
+                                                    />
+                                                    {/* Dots for each point */}
+                                                    {product.timeline.map((t, i) => {
+                                                         const x = (i / (product.timeline.length - 1 || 1)) * width;
+                                                         const range = maxPrice - minPrice;
+                                                         const y = range === 0 
+                                                             ? height / 2 
+                                                             : height - ((t.avgPrice - minPrice) / range) * height;
+                                                         return (
+                                                             <circle cx={x} cy={y} r="1.5" fill="white" stroke="currentColor" className="text-slate-400" key={i} />
+                                                         )
+                                                    })}
+                                                </svg>
+                                            </div>
+                                            <div className="flex justify-between text-[9px] text-slate-400 mt-1">
+                                                <span>{product.timeline[0]?.month}</span>
+                                                <span>{product.timeline[product.timeline.length-1]?.month}</span>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
                   </>
                 )}
              </div>

@@ -6,27 +6,57 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-/// 扫描目录中的所有 Excel 文件
-pub fn scan_excel_files(dir: &Path) -> Result<Vec<PathBuf>> {
+/// 扫描目录中的所有 Excel 文件，并根据一级子目录确定客户类型
+/// 目录结构: Root -> Type (现金客户/月结客户) -> ... -> Files
+pub fn scan_excel_files(dir: &Path) -> Result<Vec<(PathBuf, String)>> {
     let mut files = Vec::new();
 
-    for entry in WalkDir::new(dir)
-        .follow_links(true)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    if !dir.exists() {
+        return Ok(files);
+    }
+
+    // 读取根目录下的第一级子目录作为客户类型
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
         let path = entry.path();
-        if let Some(ext) = path.extension() {
-            let ext_str = ext.to_string_lossy().to_lowercase();
-            if ext_str == "xls" || ext_str == "xlsx" {
-                // 跳过临时文件
-                if !path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .starts_with("~$")
-                {
-                    files.push(path.to_path_buf());
+        
+        if path.is_dir() {
+            // 获取目录名作为类型 (e.g. "现金客户")
+            let type_name = path.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+
+            // 递归扫描该类型目录下的所有 Excel 文件
+            for walk_entry in WalkDir::new(&path)
+                .follow_links(true)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                let file_path = walk_entry.path();
+                if let Some(ext) = file_path.extension() {
+                    let ext_str = ext.to_string_lossy().to_lowercase();
+                    if ext_str == "xls" || ext_str == "xlsx" {
+                        // 跳过临时文件
+                        if !file_path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .starts_with("~$")
+                        {
+                            files.push((file_path.to_path_buf(), type_name.clone()));
+                        }
+                    }
+                }
+            }
+        } else {
+             // 如果根目录下直接有文件，归类为 "未分类" 或 "默认"
+             if let Some(ext) = path.extension() {
+                let ext_str = ext.to_string_lossy().to_lowercase();
+                if ext_str == "xls" || ext_str == "xlsx" {
+                    if !path.file_name().unwrap_or_default().to_string_lossy().starts_with("~$") {
+                        files.push((path.to_path_buf(), "默认".to_string()));
+                    }
                 }
             }
         }
@@ -36,11 +66,11 @@ pub fn scan_excel_files(dir: &Path) -> Result<Vec<PathBuf>> {
 }
 
 /// 合并所有送货单数据
-pub fn merge_delivery_data(files: &[PathBuf]) -> Result<Vec<DeliveryItem>> {
+pub fn merge_delivery_data(files: &[(PathBuf, String)]) -> Result<Vec<DeliveryItem>> {
     let mut all_items = Vec::new();
 
-    for file in files {
-        match extract_delivery_data(file) {
+    for (file, customer_type) in files {
+        match extract_delivery_data(file, customer_type) {
             Ok(items) => {
                 all_items.extend(items);
             }
@@ -55,7 +85,7 @@ pub fn merge_delivery_data(files: &[PathBuf]) -> Result<Vec<DeliveryItem>> {
 
 /// 验证并合并送货单数据
 pub fn validate_delivery_data(
-    files: &[PathBuf],
+    files: &[(PathBuf, String)],
 ) -> (
     Vec<DeliveryItem>,
     Vec<FileValidationError>,
@@ -67,8 +97,8 @@ pub fn validate_delivery_data(
     // 记录 (客户, 单号) 及其来源文件，用于同客户内的单号查重: (customer, order_no) -> file_path
     let mut order_no_map: HashMap<(String, String), String> = HashMap::new();
 
-    for file in files {
-        match extract_delivery_data(file) {
+    for (file, customer_type) in files {
+        match extract_delivery_data(file, customer_type) {
             Ok(items) => {
                 if items.is_empty() {
                     warnings.push(FileValidationError {
