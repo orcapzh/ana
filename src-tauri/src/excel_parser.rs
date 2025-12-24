@@ -20,36 +20,47 @@ pub fn extract_delivery_data(file_path: &Path, customer_type: &str) -> Result<Ve
 
     let mut items = Vec::new();
 
-    // 提取客户名称（第5行，索引4，列1）
-    let customer_name = range
-        .rows()
-        .nth(4)
-        .and_then(|row| row.get(1))
-        .map(|c| c.to_string().trim().to_string())
-        .unwrap_or_default();
-
-    // 提取日期（第5行，索引4，列7）- Excel日期序列号
-    let date = range
-        .rows()
-        .nth(4)
-        .and_then(|row| row.get(7))
-        .map(|c| excel_date_to_string(c))
-        .unwrap_or_default();
-
-    // 提取送货单号 (在前8行中查找包含 "No" 或 "单号" 的单元格)
+    let mut customer_name = String::new();
+    let mut date = String::new();
     let mut delivery_order_no = String::new();
-    for row_idx in 0..8 {
+
+    // 扫描前 10 行以提取 客户、日期、单号
+    for row_idx in 0..10 {
         if let Some(row) = range.rows().nth(row_idx) {
             for (col_idx, cell) in row.iter().enumerate() {
                 let cell_str = cell.to_string().trim().to_string();
                 let cell_lower = cell_str.to_lowercase();
-                
-                if cell_lower.contains("no") || cell_lower.contains("单号") {
-                    // 情况1: 单号在同一个单元格 (e.g. "No. 12345", "No:123", "No 123", "单号：123")
-                    // 尝试用常见的分隔符拆分
+
+                // 1. 提取客户名称
+                if (cell_str.contains("客户") || cell_str.contains("单位")) && customer_name.is_empty() {
+                    // 尝试在同一个单元格
+                    let parts: Vec<&str> = cell_str.split(|c| c == ':' || c == '：').collect();
+                    if parts.len() > 1 && !parts[1].trim().is_empty() {
+                        customer_name = parts[1].trim().to_string();
+                    } else if let Some(next_cell) = row.get(col_idx + 1) {
+                        // 尝试在下一个单元格
+                        let val = next_cell.to_string().trim().to_string();
+                        if !val.is_empty() {
+                            customer_name = val;
+                        }
+                    }
+                }
+
+                // 2. 提取日期
+                if cell_str.contains("日期") && date.is_empty() {
+                    let parts: Vec<&str> = cell_str.split(|c| c == ':' || c == '：').collect();
+                    if parts.len() > 1 && !parts[1].trim().is_empty() {
+                        // 这里的 parts[1] 是字符串，需要标准化
+                        date = normalize_date(parts[1].trim());
+                    } else if let Some(next_cell) = row.get(col_idx + 1) {
+                        date = excel_date_to_string(next_cell);
+                    }
+                }
+
+                // 3. 提取送货单号
+                if (cell_lower.contains("no") || cell_lower.contains("单号")) && delivery_order_no.is_empty() {
+                    // 逻辑保持之前的增强版
                     let parts: Vec<&str> = cell_str.split(|c| c == ':' || c == '：' || c == '.' || c == ' ').collect();
-                    
-                    // 寻找第一个看起来像单号的部分（通常在 "No" 之后）
                     for (p_idx, part) in parts.iter().enumerate() {
                         let p_trimmed = part.trim();
                         let p_lower = p_trimmed.to_lowercase();
@@ -61,37 +72,40 @@ pub fn extract_delivery_data(file_path: &Path, customer_type: &str) -> Result<Ve
                             }
                         }
                     }
-                    
-                    if !delivery_order_no.is_empty() { break; }
-
-                    // 如果上面没找到，但单元格包含 "No" 且后面有数字 (e.g. "No12345")
-                    if cell_lower.starts_with("no") {
+                    if delivery_order_no.is_empty() && cell_lower.starts_with("no") {
                         let val = &cell_str[2..].trim();
                         if !val.is_empty() {
                             delivery_order_no = val.to_string();
-                            break;
                         }
                     }
-                    
-                    // 情况2: 单号在下一个单元格
-                    if let Some(next_cell) = row.get(col_idx + 1) {
-                        let next_str = next_cell.to_string().trim().to_string();
-                        if !next_str.is_empty() {
-                            delivery_order_no = next_str;
-                            break;
+                    if delivery_order_no.is_empty() {
+                        if let Some(next_cell) = row.get(col_idx + 1) {
+                            let next_str = next_cell.to_string().trim().to_string();
+                            if !next_str.is_empty() {
+                                delivery_order_no = next_str;
+                            }
                         }
                     }
                 }
             }
         }
-        if !delivery_order_no.is_empty() {
-            break;
+    }
+
+    // 数据通常从包含 "货名" 的下一行或固定行开始
+    // 为了兼容性，我们寻找包含 "货名" 的行索引
+    let mut data_start_row = 8; // 默认
+    for row_idx in 0..15 {
+        if let Some(row) = range.rows().nth(row_idx) {
+            let row_str = row.iter().map(|c| c.to_string()).collect::<String>();
+            if row_str.contains("货名") || row_str.contains("Description") {
+                data_start_row = row_idx + 1;
+                break;
+            }
         }
     }
 
-    // 数据从第9行开始（索引8）
     for (idx, row) in range.rows().enumerate() {
-        if idx < 8 {
+        if idx < data_start_row {
             continue;
         }
 
@@ -172,9 +186,28 @@ fn excel_date_to_string(cell: &Data) -> String {
         Data::DateTime(dt) => excel_serial_to_date(dt.as_f64() as i64),
         Data::Float(f) => excel_serial_to_date(*f as i64),
         Data::Int(i) => excel_serial_to_date(*i),
-        Data::String(s) => s.trim().to_string(),
+        Data::String(s) => normalize_date(s.trim()),
         _ => String::new(),
     }
+}
+
+/// 标准化日期字符串为 YYYY-MM-DD
+fn normalize_date(date_str: &str) -> String {
+    let formats = [
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%Y年%m月%d日",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
+    ];
+
+    for format in &formats {
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(date_str, format) {
+            return date.format("%Y-%m-%d").to_string();
+        }
+    }
+
+    date_str.to_string()
 }
 
 /// Excel 日期序列号转日期

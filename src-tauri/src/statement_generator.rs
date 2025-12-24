@@ -168,6 +168,8 @@ fn format_date(date_str: &str) -> String {
         "%Y/%m/%d",
         "%Y年%m月%d日",
         "%Y-%m-%d %H:%M:%S",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
     ];
 
     for format in &formats {

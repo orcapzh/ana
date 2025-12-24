@@ -190,7 +190,7 @@ fn extract_date_from_filename(filename: &str) -> Option<chrono::NaiveDate> {
 }
 
 fn parse_date(date_str: &str) -> Result<chrono::NaiveDate, String> {
-    let formats = ["%Y-%m-%d", "%Y/%m/%d", "%Y年%m月%d日"];
+    let formats = ["%Y-%m-%d", "%Y/%m/%d", "%Y年%m月%d日", "%d/%m/%Y", "%m/%d/%Y"];
     for format in &formats {
         if let Ok(date) = chrono::NaiveDate::parse_from_str(date_str, format) {
             return Ok(date);
@@ -201,7 +201,7 @@ fn parse_date(date_str: &str) -> Result<chrono::NaiveDate, String> {
 
 fn validate_date_str(date_str: &str) -> Result<(), String> {
     // 尝试解析日期
-    let formats = ["%Y-%m-%d", "%Y/%m/%d", "%Y年%m月%d日"];
+    let formats = ["%Y-%m-%d", "%Y/%m/%d", "%Y年%m月%d日", "%d/%m/%Y", "%m/%d/%Y"];
 
     for format in &formats {
         if let Ok(_) = chrono::NaiveDate::parse_from_str(date_str, format) {
@@ -292,6 +292,8 @@ fn extract_year_month(date_str: &str) -> String {
         "%Y/%m/%d",
         "%Y年%m月%d日",
         "%Y-%m-%d %H:%M:%S",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
     ];
 
     for format in &formats {
